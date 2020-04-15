@@ -1,0 +1,71 @@
+
+image: docker:git
+
+services:
+  - docker:18.09.8-dind
+
+variables:
+  DOCKER_HOST: tcp://localhost:2375/
+
+before_script:
+  # install gcloud
+  - apk add gcc libc-dev g++ python3-dev openssl-dev make
+  - apk add libffi-dev libxml2 libffi-dev 
+  - apk add --update curl which bash
+  - apk --no-cache add python2 
+  - curl -sSL https://sdk.cloud.google.com | bash 
+  - apk del python2 && apk --no-cache add python3
+  - export PATH=$PATH:/root/google-cloud-sdk/bin
+  - gcloud version
+
+  # install docker-compose
+  - pip3 install 'docker-compose==1.25.2'
+  - docker-compose --version
+
+  # Authenticate GCP
+  # SERVICE_ACCOUNT is a key in https://docs.gitlab.com/ee/ci/variables/ , these are passed to CICD in run time
+  - echo "Authenticating Service account"
+  - echo $SERVICE_ACCOUNT > /tmp/$CI_PIPELINE_ID.json
+  - gcloud auth activate-service-account --key-file /tmp/$CI_PIPELINE_ID.json
+  - gcloud auth configure-docker
+  - docker info
+
+# remove all keys
+after_script:
+- rm /tmp/$CI_PIPELINE_ID.json
+  
+build_development:
+  stage: build
+  environment: Development
+  only:
+  - develop_temp
+  script:
+  # get config file
+  - gsutil cp gs://bucket/env.properties ./env/env.properties
+  - docker-compose build
+  - docker image ls 
+  - docker tag image_name us.gcr.io/project_id/Bucket_name
+  # push image to 
+  - docker push us.gcr.io/project_id/Bucket_name. 
+  - rm ./env/env.properties
+  - rm ./env/gcp-private-key.json
+
+test_development:
+  stage: test
+  needs: ["build_development"]
+  environment: Development
+  only:
+  - develop_temp
+  script:
+  - echo "Testing docker container image"
+  - docker pull us.gcr.io/project_id/Bucket_name
+
+deploy_development:
+  stage: deploy
+  needs: ["build_development", "test_development"]
+  environment: Development
+  only:
+  - develop_temp
+  script:
+  - echo "Deploying container started"
+  - gcloud app deploy --image-url=us.gcr.io/us.gcr.io/project_id/Bucket_name
